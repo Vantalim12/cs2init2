@@ -1,5 +1,4 @@
-// src/pages/residents/ResidentProfile.js - Fix for the data loading issue
-
+// src/pages/residents/ResidentProfile.js - Fixed version
 import React, { useState, useEffect } from "react";
 import {
   Container,
@@ -12,9 +11,8 @@ import {
   Badge,
   Tabs,
   Tab,
-  Form,
 } from "react-bootstrap";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "../../contexts/AuthContext";
 import {
   residentService,
@@ -28,13 +26,13 @@ import {
   FaUserFriends,
   FaQrcode,
   FaIdCard,
-  FaLock,
-  FaSave,
+  FaExclamationTriangle,
+  FaSyncAlt,
 } from "react-icons/fa";
 import QrCodeDisplay from "../../components/QrCodeDisplay";
 
 const ResidentProfile = () => {
-  const { currentUser, checkAuth } = useAuth();
+  const { currentUser } = useAuth();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [resident, setResident] = useState(null);
@@ -45,80 +43,91 @@ const ResidentProfile = () => {
   const [qrCode, setQrCode] = useState(null);
   const [loadingQrCode, setLoadingQrCode] = useState(false);
   const [activeTab, setActiveTab] = useState("info");
-  const [changingPassword, setChangingPassword] = useState(false);
-  const [passwordData, setPasswordData] = useState({
-    currentPassword: "",
-    newPassword: "",
-    confirmPassword: "",
-  });
 
   useEffect(() => {
-    // First ensure we have the current user data
-    const loadUserData = async () => {
-      try {
-        await checkAuth();
-        if (currentUser?.residentId) {
-          fetchResidentData();
-        } else {
-          setLoading(false);
-          setError("User resident ID not found. Please contact administrator.");
-        }
-      } catch (err) {
-        console.error("Error loading user data:", err);
-        setLoading(false);
-        setError("Error loading user data. Please try logging in again.");
-      }
-    };
-
-    loadUserData();
+    if (currentUser?.residentId) {
+      fetchResidentData();
+    } else {
+      setLoading(false);
+      setError("User resident ID not found. Please contact administrator.");
+    }
   }, [currentUser]);
 
   const fetchResidentData = async () => {
     try {
       setLoading(true);
-      setError(""); // Clear any previous errors
+      setError("");
 
       console.log("Fetching resident data for ID:", currentUser.residentId);
 
-      const [residentRes, documentsRes, eventsRes] = await Promise.all([
-        residentService.getById(currentUser.residentId),
-        documentRequestService.getByResident(currentUser.residentId),
-        eventService.getAll(),
-      ]);
+      // First fetch the resident's own data
+      const residentRes = await residentService.getById(currentUser.residentId);
 
-      console.log("Resident data received:", residentRes.data);
+      if (!residentRes || !residentRes.data) {
+        throw new Error("Failed to retrieve resident data");
+      }
 
       setResident(residentRes.data);
-      setDocumentRequests(documentsRes.data);
+      console.log("Resident data loaded:", residentRes.data);
 
-      // Filter events where the resident is registered
-      const registeredEvents = eventsRes.data.filter((event) =>
-        event.attendees?.some(
-          (attendee) => attendee.id === currentUser.residentId
-        )
-      );
-      setRegisteredEvents(registeredEvents);
+      // After we have the resident data, fetch other related information
+      try {
+        const [documentsRes, eventsRes] = await Promise.all([
+          documentRequestService.getByResident(currentUser.residentId),
+          eventService.getAll(),
+        ]);
 
-      // If resident belongs to a family, fetch family head data
-      if (residentRes.data.familyHeadId) {
-        const headResponse = await familyHeadService.getById(
-          residentRes.data.familyHeadId
-        );
-        setFamilyHead(headResponse.data);
+        if (documentsRes && documentsRes.data) {
+          setDocumentRequests(documentsRes.data);
+        }
+
+        // Filter events where the resident is registered
+        if (eventsRes && eventsRes.data) {
+          const userEvents = eventsRes.data.filter((event) =>
+            event.attendees?.some(
+              (attendee) => attendee.id === currentUser.residentId
+            )
+          );
+          setRegisteredEvents(userEvents);
+        }
+
+        // If resident belongs to a family, fetch family head data
+        if (residentRes.data.familyHeadId) {
+          try {
+            const headResponse = await familyHeadService.getById(
+              residentRes.data.familyHeadId
+            );
+            if (headResponse && headResponse.data) {
+              setFamilyHead(headResponse.data);
+            }
+          } catch (familyError) {
+            console.error("Error fetching family head:", familyError);
+            // Don't set an error state as this is not critical
+          }
+        }
+      } catch (secondaryError) {
+        console.error("Error fetching secondary data:", secondaryError);
+        // We don't want to block the main profile view if these fail
+        toast.warning("Some profile data couldn't be loaded");
       }
     } catch (error) {
       console.error("Error fetching resident data:", error);
-      setError(
-        "Failed to load profile data. " +
-          (error.response?.data?.error || error.message)
-      );
-      toast.error("Failed to load profile data");
+      const errorMessage =
+        error.response?.data?.error ||
+        error.message ||
+        "Failed to load profile data";
+      setError(errorMessage);
+      toast.error(errorMessage);
+
+      // If we fail to load the resident data, we should stop loading
+      // but keep any data we might have already loaded
+      if (!resident) {
+        setResident(null);
+      }
     } finally {
       setLoading(false);
     }
   };
-
-  // Rest of the component remains the same...
 
   const fetchQrCode = async () => {
     if (!currentUser?.residentId) {
@@ -142,52 +151,6 @@ const ResidentProfile = () => {
     }
   };
 
-  const handlePasswordChange = (e) => {
-    const { name, value } = e.target;
-    setPasswordData((prev) => ({
-      ...prev,
-      [name]: value,
-    }));
-  };
-
-  const handlePasswordSubmit = async (e) => {
-    e.preventDefault();
-
-    if (passwordData.newPassword !== passwordData.confirmPassword) {
-      toast.error("New passwords do not match");
-      return;
-    }
-
-    if (passwordData.newPassword.length < 6) {
-      toast.error("New password must be at least 6 characters long");
-      return;
-    }
-
-    try {
-      setChangingPassword(true);
-      const result = await changePassword({
-        currentPassword: passwordData.currentPassword,
-        newPassword: passwordData.newPassword,
-      });
-
-      if (result.success) {
-        toast.success("Password changed successfully");
-        setPasswordData({
-          currentPassword: "",
-          newPassword: "",
-          confirmPassword: "",
-        });
-      } else {
-        toast.error(result.error);
-      }
-    } catch (err) {
-      console.error("Error changing password:", err);
-      toast.error("Failed to change password");
-    } finally {
-      setChangingPassword(false);
-    }
-  };
-
   const calculateAge = (birthDate) => {
     if (!birthDate) return "N/A";
 
@@ -201,6 +164,10 @@ const ResidentProfile = () => {
     return age;
   };
 
+  const handleEditProfile = () => {
+    navigate(`/dashboard/residents/edit/${currentUser.residentId}`);
+  };
+
   if (loading) {
     return (
       <Container className="text-center py-5">
@@ -210,7 +177,7 @@ const ResidentProfile = () => {
     );
   }
 
-  if (error) {
+  if (error && !resident) {
     return (
       <Container className="py-5">
         <Alert variant="danger">
@@ -218,25 +185,9 @@ const ResidentProfile = () => {
           {error}
         </Alert>
         <div className="text-center mt-4">
-          <Button onClick={() => window.location.reload()} variant="primary">
+          <Button onClick={() => fetchResidentData()} variant="primary">
             <FaSyncAlt className="me-2" />
             Retry
-          </Button>
-        </div>
-      </Container>
-    );
-  }
-
-  if (!resident) {
-    return (
-      <Container className="py-5">
-        <Alert variant="warning">
-          <FaExclamationTriangle className="me-2" />
-          Resident data not found. Please ensure you are logged in correctly.
-        </Alert>
-        <div className="text-center mt-4">
-          <Button onClick={() => navigate("/dashboard")} variant="primary">
-            Back to Dashboard
           </Button>
         </div>
       </Container>
@@ -246,6 +197,13 @@ const ResidentProfile = () => {
   return (
     <Container>
       <h2 className="mb-4">My Profile</h2>
+
+      {error && (
+        <Alert variant="warning" dismissible onClose={() => setError("")}>
+          <FaExclamationTriangle className="me-2" />
+          {error}
+        </Alert>
+      )}
 
       <Tabs
         activeKey={activeTab}
@@ -258,58 +216,58 @@ const ResidentProfile = () => {
               <h5 className="mb-0">
                 <FaIdCard className="me-2" /> Personal Information
               </h5>
-              <Button
-                variant="primary"
-                size="sm"
-                onClick={() =>
-                  navigate(
-                    `/dashboard/residents/edit/${currentUser.residentId}`
-                  )
-                }
-              >
+              <Button variant="primary" size="sm" onClick={handleEditProfile}>
                 <FaEdit className="me-2" /> Edit Profile
               </Button>
             </Card.Header>
             <Card.Body>
-              <Row>
-                <Col md={6}>
-                  <p>
-                    <strong>Resident ID:</strong> {resident.residentId}
-                  </p>
-                  <p>
-                    <strong>Name:</strong> {resident.firstName}{" "}
-                    {resident.lastName}
-                  </p>
-                  <p>
-                    <strong>Gender:</strong> {resident.gender}
-                  </p>
-                  <p>
-                    <strong>Age:</strong> {calculateAge(resident.birthDate)}{" "}
-                    years old
-                  </p>
-                </Col>
-                <Col md={6}>
-                  <p>
-                    <strong>Birth Date:</strong>{" "}
-                    {resident.birthDate
-                      ? new Date(resident.birthDate).toLocaleDateString()
-                      : "N/A"}
-                  </p>
-                  <p>
-                    <strong>Address:</strong> {resident.address}
-                  </p>
-                  <p>
-                    <strong>Contact Number:</strong>{" "}
-                    {resident.contactNumber || "Not specified"}
-                  </p>
-                  <p>
-                    <strong>Registration Date:</strong>{" "}
-                    {resident.registrationDate
-                      ? new Date(resident.registrationDate).toLocaleDateString()
-                      : "N/A"}
-                  </p>
-                </Col>
-              </Row>
+              {resident ? (
+                <Row>
+                  <Col md={6}>
+                    <p>
+                      <strong>Resident ID:</strong> {resident.residentId}
+                    </p>
+                    <p>
+                      <strong>Name:</strong> {resident.firstName}{" "}
+                      {resident.lastName}
+                    </p>
+                    <p>
+                      <strong>Gender:</strong> {resident.gender}
+                    </p>
+                    <p>
+                      <strong>Age:</strong> {calculateAge(resident.birthDate)}{" "}
+                      years old
+                    </p>
+                  </Col>
+                  <Col md={6}>
+                    <p>
+                      <strong>Birth Date:</strong>{" "}
+                      {resident.birthDate
+                        ? new Date(resident.birthDate).toLocaleDateString()
+                        : "N/A"}
+                    </p>
+                    <p>
+                      <strong>Address:</strong> {resident.address}
+                    </p>
+                    <p>
+                      <strong>Contact Number:</strong>{" "}
+                      {resident.contactNumber || "Not specified"}
+                    </p>
+                    <p>
+                      <strong>Registration Date:</strong>{" "}
+                      {resident.registrationDate
+                        ? new Date(
+                            resident.registrationDate
+                          ).toLocaleDateString()
+                        : "N/A"}
+                    </p>
+                  </Col>
+                </Row>
+              ) : (
+                <p className="text-center text-muted">
+                  Resident data not available
+                </p>
+              )}
             </Card.Body>
           </Card>
 
@@ -356,7 +314,11 @@ const ResidentProfile = () => {
               ) : qrCode ? (
                 <QrCodeDisplay
                   qrCodeData={qrCode}
-                  title={`${resident.firstName} ${resident.lastName} - Resident ID`}
+                  title={
+                    resident
+                      ? `${resident.firstName} ${resident.lastName} - Resident ID`
+                      : "Resident ID"
+                  }
                   description={`This QR code contains your resident verification information.`}
                   size={300}
                 />
@@ -433,6 +395,11 @@ const ResidentProfile = () => {
                 </p>
               )}
             </Card.Body>
+            <Card.Footer className="bg-white">
+              <Button as={Link} to="/dashboard/certificates" variant="primary">
+                Request New Certificate
+              </Button>
+            </Card.Footer>
           </Card>
         </Tab>
 
@@ -472,97 +439,11 @@ const ResidentProfile = () => {
                 </p>
               )}
             </Card.Body>
-          </Card>
-        </Tab>
-
-        <Tab eventKey="security" title="Security">
-          <Card className="shadow-sm">
-            <Card.Header>
-              <h5 className="mb-0">
-                <FaLock className="me-2" /> Change Password
-              </h5>
-            </Card.Header>
-            <Card.Body>
-              <Form onSubmit={handlePasswordSubmit}>
-                <Form.Group className="mb-3">
-                  <Form.Label>Current Password</Form.Label>
-                  <Form.Control
-                    type="password"
-                    name="currentPassword"
-                    value={passwordData.currentPassword}
-                    onChange={handlePasswordChange}
-                    required
-                    disabled={changingPassword}
-                  />
-                </Form.Group>
-
-                <Form.Group className="mb-3">
-                  <Form.Label>New Password</Form.Label>
-                  <Form.Control
-                    type="password"
-                    name="newPassword"
-                    value={passwordData.newPassword}
-                    onChange={handlePasswordChange}
-                    required
-                    disabled={changingPassword}
-                    minLength={6}
-                  />
-                  <Form.Text className="text-muted">
-                    Must be at least 6 characters long
-                  </Form.Text>
-                </Form.Group>
-
-                <Form.Group className="mb-3">
-                  <Form.Label>Confirm New Password</Form.Label>
-                  <Form.Control
-                    type="password"
-                    name="confirmPassword"
-                    value={passwordData.confirmPassword}
-                    onChange={handlePasswordChange}
-                    required
-                    disabled={changingPassword}
-                  />
-                </Form.Group>
-
-                <Button
-                  variant="primary"
-                  type="submit"
-                  disabled={changingPassword}
-                >
-                  {changingPassword ? (
-                    <>
-                      <Spinner animation="border" size="sm" className="me-2" />
-                      Changing Password...
-                    </>
-                  ) : (
-                    <>
-                      <FaSave className="me-2" /> Change Password
-                    </>
-                  )}
-                </Button>
-              </Form>
-            </Card.Body>
-          </Card>
-
-          <Card className="shadow-sm mt-4">
-            <Card.Header>
-              <h5 className="mb-0">Account Information</h5>
-            </Card.Header>
-            <Card.Body>
-              <p>
-                <strong>Username:</strong> {currentUser.username}
-              </p>
-              <p>
-                <strong>Account Type:</strong>{" "}
-                <Badge bg="primary">Resident</Badge>
-              </p>
-              <p>
-                <strong>Account Created:</strong>{" "}
-                {currentUser.createdAt
-                  ? new Date(currentUser.createdAt).toLocaleDateString()
-                  : "Not available"}
-              </p>
-            </Card.Body>
+            <Card.Footer className="bg-white">
+              <Button as={Link} to="/dashboard/events" variant="primary">
+                Browse Events
+              </Button>
+            </Card.Footer>
           </Card>
         </Tab>
       </Tabs>

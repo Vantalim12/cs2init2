@@ -1,4 +1,4 @@
-// src/pages/familyHeads/EditFamilyHead.js
+// src/pages/familyHeads/EditFamilyHead.js - Fixed version
 import React, { useState, useEffect } from "react";
 import {
   Container,
@@ -40,11 +40,16 @@ const EditFamilyHead = () => {
       const response = await familyHeadService.getById(id);
       const familyHead = response.data;
 
+      // Format date for HTML date input (YYYY-MM-DD)
+      const birthDate = new Date(familyHead.birthDate)
+        .toISOString()
+        .split("T")[0];
+
       setFormData({
         firstName: familyHead.firstName,
         lastName: familyHead.lastName,
         gender: familyHead.gender,
-        birthDate: new Date(familyHead.birthDate).toISOString().split("T")[0],
+        birthDate: birthDate,
         address: familyHead.address,
         contactNumber: familyHead.contactNumber,
       });
@@ -72,11 +77,17 @@ const EditFamilyHead = () => {
       setSaving(true);
       setError("");
 
-      // Prepare data for submission
+      // Send the data as is, without additional transformations
       const submitData = {
-        ...formData,
-        birthDate: new Date(formData.birthDate).toISOString(),
+        firstName: formData.firstName,
+        lastName: formData.lastName,
+        gender: formData.gender,
+        birthDate: formData.birthDate,
+        address: formData.address,
+        contactNumber: formData.contactNumber,
       };
+
+      console.log("Submitting family head update:", submitData);
 
       await familyHeadService.update(id, submitData);
       toast.success("Family head updated successfully");

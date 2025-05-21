@@ -1,4 +1,4 @@
-// mongodb-backend/routes/residents.js
+// mongodb-backend/routes/residents.js - Fixed update route
 const express = require("express");
 const router = express.Router();
 const { body, validationResult } = require("express-validator");
@@ -33,8 +33,6 @@ router.get("/", isAdmin, async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 });
-
-// routes/residents.js - Fix for resident API endpoint
 
 // Get resident by ID
 router.get("/:id", async (req, res) => {
@@ -211,17 +209,18 @@ router.post(
   }
 );
 
-// Update resident
+// Update resident - FIXED
 router.put(
   "/:id",
   [
     body("firstName").not().isEmpty().withMessage("First name is required"),
     body("lastName").not().isEmpty().withMessage("Last name is required"),
     body("gender").not().isEmpty().withMessage("Gender is required"),
-    body("birthDate").isDate().withMessage("Valid birth date is required"),
+    body("birthDate")
+      .not()
+      .isEmpty()
+      .withMessage("Valid birth date is required"),
     body("address").not().isEmpty().withMessage("Address is required"),
-    body("contactNumber").optional(),
-    body("familyHeadId").optional(),
   ],
   async (req, res) => {
     // Validate request
@@ -232,6 +231,8 @@ router.put(
 
     try {
       const { id } = req.params;
+
+      console.log("Updating resident with ID:", id, "Data:", req.body);
 
       // Check if resident exists
       const resident = await Resident.findOne({ residentId: id });
@@ -247,41 +248,48 @@ router.put(
       }
 
       // If family head changed, update related data
-      if (resident.familyHeadId !== req.body.familyHeadId) {
+      let updatedAddress = req.body.address;
+      if (
+        resident.familyHeadId !== req.body.familyHeadId &&
+        req.body.familyHeadId
+      ) {
         // If new family head specified, get their info and use their address
-        if (req.body.familyHeadId) {
-          const familyHead = await FamilyHead.findOne({
-            headId: req.body.familyHeadId,
-          });
-          if (!familyHead) {
-            return res
-              .status(400)
-              .json({ error: "Family head does not exist" });
-          }
-          // Use family head's address
-          req.body.address = familyHead.address;
+        const familyHead = await FamilyHead.findOne({
+          headId: req.body.familyHeadId,
+        });
+        if (!familyHead) {
+          return res.status(400).json({ error: "Family head does not exist" });
         }
+        // Use family head's address
+        updatedAddress = familyHead.address;
       }
 
-      // Update resident
+      // Prepare update data
+      const updateData = {
+        firstName: req.body.firstName,
+        lastName: req.body.lastName,
+        gender: req.body.gender,
+        birthDate: req.body.birthDate, // Send as is without conversion
+        address: updatedAddress,
+        contactNumber: req.body.contactNumber || "",
+        familyHeadId: req.body.familyHeadId || "",
+      };
+
+      console.log("Update data prepared:", updateData);
+
+      // Update resident - use the correct field for querying the document
       const updatedResident = await Resident.findOneAndUpdate(
         { residentId: id },
-        {
-          firstName: req.body.firstName,
-          lastName: req.body.lastName,
-          gender: req.body.gender,
-          birthDate: req.body.birthDate,
-          address: req.body.address,
-          contactNumber: req.body.contactNumber || "",
-          familyHeadId: req.body.familyHeadId || "",
-        },
+        updateData,
         { new: true, projection: "-qrCode" }
       );
+
+      console.log("Resident updated successfully:", updatedResident);
 
       res.json(updatedResident);
     } catch (error) {
       console.error(`Error updating resident ${req.params.id}:`, error);
-      res.status(500).json({ error: "Server error" });
+      res.status(500).json({ error: "Server error", details: error.message });
     }
   }
 );

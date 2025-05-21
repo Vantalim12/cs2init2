@@ -1,4 +1,4 @@
-// middleware/auth.js - Fix for the user authentication middleware
+// mongodb-backend/middleware/auth.js - Fixed user authentication middleware
 
 const jwt = require("jsonwebtoken");
 const User = require("../models/User");
@@ -45,13 +45,18 @@ const isResidentOwner = (req, res, next) => {
   if (req.user && req.user.role === "resident") {
     // If the request contains a residentId parameter, check that it matches the user's residentId
     if (req.params.id && req.user.residentId !== req.params.id) {
+      console.log(
+        `Access denied: User ${req.user.username} (${req.user.residentId}) attempted to access resident ${req.params.id}`
+      );
       return res.status(403).json({
         error: "Access denied. You can only access your own information.",
       });
     }
     next();
-  } else {
+  } else if (req.user && req.user.role === "admin") {
     next(); // Admin can access all
+  } else {
+    return res.status(403).json({ error: "Unauthorized access" });
   }
 };
 
